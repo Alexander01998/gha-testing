@@ -6,6 +6,9 @@ on:
       value:
         description: "Value to append to updates.txt"
         required: true
+      distinct_id:
+        description: "Automatically set by the dispatch-and-wait action (leave blank if running manually)"
+        required: false
 
 permissions:
   actions: read
@@ -15,6 +18,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
+      - name: Echo distinct ID ${{ inputs.distinct_id }}
+        run: echo ${{ inputs.distinct_id }}
+
       - name: Wait for older queued updates
         env:
           GH_TOKEN: ${{ github.token }}
