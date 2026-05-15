@@ -12,15 +12,34 @@ permissions:
   actions: write
 
 jobs:
-  fanout:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - name: Dispatch queued updates
+      - name: Build dispatch matrix
+        id: matrix
         env:
-          GH_TOKEN: ${{ github.token }}
           COUNT: ${{ inputs.count }}
         run: |
-          for i in $(seq 1 "$COUNT"); do
-            gh workflow run queued_update.yml --ref "$GITHUB_REF_NAME" -f value="item-$i" &
-          done
-          wait
+          items=$(seq 1 "$COUNT" | jq -R -n -c '[inputs | {item: (tonumber)}]')
+          echo "matrix=$items" >> "$GITHUB_OUTPUT"
+
+  fanout:
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Dispatch queued update
+        uses: Wurst-Imperium/dispatch-and-wait@v1
+        with:
+          token: ${{ github.token }}
+          owner: ${{ github.repository_owner }}
+          repo: ${{ github.event.repository.name }}
+          ref: ${{ github.ref_name }}
+          workflow: queued_update.yml
+          workflow_inputs: '{"value":"item-${{ matrix.item }}"}'
+          run_timeout_seconds: 600
