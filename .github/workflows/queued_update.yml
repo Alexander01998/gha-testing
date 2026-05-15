@@ -47,6 +47,8 @@ jobs:
           done
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
 
       - name: Commit update
         run: |
