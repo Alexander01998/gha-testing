@@ -1,0 +1,52 @@
+name: Queued Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      value:
+        description: "Value to append to updates.txt"
+        required: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for older queued updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          while true; do
+            older_runs=$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/queued_update.yml/runs?branch=$GITHUB_REF_NAME&event=workflow_dispatch&per_page=100" \
+              --jq '[.workflow_runs[]
+                | select(.conclusion == null)
+                | select(.id != (env.RUN_ID | tonumber))
+                | select(.run_number < (env.RUN_NUMBER | tonumber))
+                | .html_url
+              ] | .[]')
+
+            if [ -z "$older_runs" ]; then
+              break
+            fi
+
+            echo "Waiting for older queued_update.yml run(s):"
+            echo "$older_runs"
+            sleep 10
+          done
+
+      - uses: actions/checkout@v6
+
+      - name: Commit update
+        run: |
+          echo "${{ github.run_number }}: ${{ inputs.value }}" >> updates.txt
+          git config --local user.email "bot@example.com"
+          git config --local user.name "Queue Test Bot"
+          git add updates.txt
+          git commit -m "Add update ${{ inputs.value }}"
+          git push

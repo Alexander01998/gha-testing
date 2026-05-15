@@ -1,0 +1,26 @@
+name: Fanout
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Number of queued updates to dispatch"
+        required: true
+        default: "8"
+
+permissions:
+  actions: write
+
+jobs:
+  fanout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch queued updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ inputs.count }}
+        run: |
+          for i in $(seq 1 "$COUNT"); do
+            gh workflow run queued_update.yml --ref "$GITHUB_REF_NAME" -f value="item-$i" &
+          done
+          wait
