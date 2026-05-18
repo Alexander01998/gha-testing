@@ -1,0 +1,118 @@
+name: Matrix Self Jobs API Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      mods:
+        description: "Space-separated list of mods to include (see data/mods.json, default: all)"
+        type: string
+        default: "all"
+      fail_mod:
+        description: "Optional mod ID whose matrix job should fail"
+        type: string
+        default: ""
+      sleep_seconds:
+        description: "Seconds each matrix job should sleep before finishing"
+        type: string
+        default: "5"
+      auto_publish:
+        description: "Run the dummy auto-publish introspection job"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Skip matrix jobs, like multi_auto_snapshot_update.yml"
+        type: boolean
+        default: false
+
+permissions:
+  # To checkout data/mods.json
+  contents: read
+  # To read this run's jobs via GitHub API
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set_matrix.outputs.matrix }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+    - name: Build mod matrix
+      id: set_matrix
+      run: |
+        if [[ "${{ inputs.mods }}" == "all" ]]; then
+          matrix=$(jq -c '{mod: to_entries | map(select(.value.supports_snapshots) | .value + {id: .key})}' data/mods.json)
+        else
+          mods_array=(${{ inputs.mods }})
+          ids_json=$(printf '%s\n' "${mods_array[@]}" | jq -R . | jq -sc .)
+          matrix=$(jq -c --argjson ids "$ids_json" '{mod: [
+            $ids[] as $id
+            | (.[$id] // error("Unknown mod ID: " + $id)) as $mod
+            | if $mod.supports_snapshots then
+                $mod + {id: $id}
+              else
+                error("Mod does not support snapshots: " + $id)
+              end
+          ]}' data/mods.json)
+        fi
+
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+        echo "Mods input: \`${{ inputs.mods }}\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "Selected mods:" >> "$GITHUB_STEP_SUMMARY"
+        jq -r '.mod[] | "- \(.id) (\(.github_repo))"' <<< "$matrix" >> "$GITHUB_STEP_SUMMARY"
+
+        if [[ "$(jq '.mod | length' <<< "$matrix")" == "0" ]]; then
+          echo "::error::No mods selected"
+          exit 1
+        fi
+
+  mod_jobs:
+    name: ${{ matrix.mod.id }}
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: ${{ !inputs.dry_run }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+    - name: Pretend to update ${{ matrix.mod.id }}
+      run: |
+        echo "Pretending to update ${{ matrix.mod.name }} from ${{ matrix.mod.github_repo }}"
+        sleep "${{ inputs.sleep_seconds }}"
+    - name: Optionally fail selected mod
+      if: ${{ matrix.mod.id == inputs.fail_mod }}
+      run: |
+        echo "::error::Intentional failure for ${{ matrix.mod.id }}"
+        exit 1
+
+  auto_publish:
+    runs-on: ubuntu-latest
+    needs: [prepare, mod_jobs]
+    if: ${{ always() && !cancelled() && inputs.auto_publish && !inputs.dry_run && needs.prepare.result == 'success' }}
+    steps:
+    - name: Find successfully updated mods
+      id: successful_mods
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        jobs_json=$(gh api \
+          "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100")
+        selected_ids_json=$(jq -c '[.mod[].id]' <<< '${{ needs.prepare.outputs.matrix }}')
+        mods=$(jq -r --argjson selected "$selected_ids_json" '
+          .jobs[]
+          | select(.conclusion == "success")
+          | select(.name as $name | $selected | index($name))
+          | .name
+        ' <<< "$jobs_json" | paste -sd' ' -)
+        echo "mods=$mods" >> "$GITHUB_OUTPUT"
+        echo "Successfully updated mods: \`${mods:-none}\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "All jobs seen by API:" >> "$GITHUB_STEP_SUMMARY"
+        jq -r '.jobs[] | "- \(.name): status=\(.status), conclusion=\(.conclusion)"' <<< "$jobs_json" >> "$GITHUB_STEP_SUMMARY"
+    - name: Dummy publish dispatch
+      if: ${{ steps.successful_mods.outputs.mods != '' }}
+      run: |
+        echo "Would dispatch publish_snapshot_ports.yml with mods: ${{ steps.successful_mods.outputs.mods }}"
+    - name: Skip dummy publish dispatch
+      if: ${{ steps.successful_mods.outputs.mods == '' }}
+      run: echo "No successful mods found; would skip publish dispatch."
