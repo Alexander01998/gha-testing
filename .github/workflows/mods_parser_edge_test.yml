@@ -1,0 +1,105 @@
+name: Mods Parser Edge Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      mods:
+        description: "Raw mods input to parse. Leave empty to test empty string behavior."
+        type: string
+        required: false
+        default: ""
+      parser:
+        description: "Parser to use for the real matrix output"
+        type: choice
+        options:
+        - old_printf
+        - jq_args
+        default: jq_args
+
+permissions:
+  # To checkout data/mods.json
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set_matrix.outputs.matrix }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Compare parser behavior
+      env:
+        MODS: ${{ inputs.mods }}
+      run: |
+        read -ra mods_array <<< "$MODS"
+
+        old_ids_json=$(printf '%s\n' "${mods_array[@]}" | jq -R . | jq -sc .)
+        new_ids_json=$(jq -cn '$ARGS.positional' --args "${mods_array[@]}")
+
+        echo "Raw MODS: [$MODS]"
+        echo "Shell array length: ${#mods_array[@]}"
+        printf 'Shell array values:'
+        printf ' [%s]' "${mods_array[@]}"
+        printf '\n'
+        echo "old printf IDs JSON: $old_ids_json"
+        echo "jq --args IDs JSON: $new_ids_json"
+
+        echo "Raw MODS: \`$MODS\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "Shell array length: \`${#mods_array[@]}\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "Old printf IDs JSON: \`$old_ids_json\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "jq --args IDs JSON: \`$new_ids_json\`" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Build mod matrix
+      id: set_matrix
+      env:
+        MODS: ${{ inputs.mods }}
+        PARSER: ${{ inputs.parser }}
+      run: |
+        if [[ "$MODS" == "all" ]]; then
+          matrix=$(jq -c '{mod: to_entries | map(select(.value.supports_snapshots) | .value + {id: .key})}' data/mods.json)
+        else
+          read -ra mods_array <<< "$MODS"
+          if [[ "$PARSER" == "old_printf" ]]; then
+            ids_json=$(printf '%s\n' "${mods_array[@]}" | jq -R . | jq -sc .)
+          else
+            ids_json=$(jq -cn '$ARGS.positional' --args "${mods_array[@]}")
+          fi
+
+          echo "Using parser: $PARSER"
+          echo "IDs JSON: $ids_json"
+          matrix=$(jq -c --argjson ids "$ids_json" '{mod: [
+            $ids[] as $id
+            | (.[$id] // error("Unknown mod ID: " + $id)) as $mod
+            | if $mod.supports_snapshots then
+                $mod + {id: $id}
+              else
+                error("Mod does not support snapshots: " + $id)
+              end
+          ]}' data/mods.json)
+        fi
+
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+        echo "Matrix: $matrix"
+
+        selected_mods=$(jq -r '.mod[].id' <<< "$matrix" | paste -sd' ' -)
+        echo "Selected mods: $selected_mods"
+        echo "Selected mods: \`${selected_mods:-none}\`" >> "$GITHUB_STEP_SUMMARY"
+
+        if [[ -z "$selected_mods" ]]; then
+          echo "::error::No mods selected"
+          echo "No mods selected." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        fi
+
+  matrix_job:
+    name: ${{ matrix.mod.id }}
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+    - name: Echo selected mod
+      run: echo "Selected ${{ matrix.mod.name }} from ${{ matrix.mod.github_repo }}"
