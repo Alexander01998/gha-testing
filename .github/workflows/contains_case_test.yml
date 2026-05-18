@@ -1,0 +1,38 @@
+name: contains() Case Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: "Text to search"
+        type: string
+        default: "[Release]"
+        required: true
+      search:
+        description: "Substring to find"
+        type: string
+        default: "[release]"
+        required: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Show expression result
+      run: |
+        echo "text=${{ inputs.text }}"
+        echo "search=${{ inputs.search }}"
+        echo "contains_result=${{ contains(inputs.text, inputs.search) }}"
+        echo "contains_result=${{ contains(inputs.text, inputs.search) }}" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Runs only if contains() is true
+      if: ${{ contains(inputs.text, inputs.search) }}
+      run: |
+        echo "contains() evaluated to true"
+        echo "Conditional step ran: true" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Runs only if contains() is false
+      if: ${{ !contains(inputs.text, inputs.search) }}
+      run: |
+        echo "contains() evaluated to false"
+        echo "Conditional step ran: false" >> "$GITHUB_STEP_SUMMARY"
