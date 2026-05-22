@@ -1,0 +1,14 @@
+name: Fake Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      distinct_id:
+        required: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pretend to publish
+        run: sleep 20

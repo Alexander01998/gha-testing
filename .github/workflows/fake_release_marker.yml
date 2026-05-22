@@ -1,0 +1,44 @@
+name: Fake Publish from [Release] Marker
+
+on:
+  workflow_run:
+    workflows: ["Fake CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish_snapshot_port:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      contains(github.event.workflow_run.head_commit.message, '[release]') &&
+      !contains(github.event.workflow_run.head_branch, '/') &&
+      github.event.workflow_run.head_branch != 'not_master'
+    steps:
+    - name: Get Minecraft version
+      id: mc_version
+      run: |
+        curl -fsSL \
+          "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.workflow_run.head_sha }}/gradle.properties" \
+          -o gradle.properties
+        mc_version=$(grep '^minecraft_version=' gradle.properties | cut -d'=' -f2 | tr -d ' \r')
+        echo "mc_version=$mc_version" >> "$GITHUB_OUTPUT"
+
+    - name: Trigger publish snapshot ports workflow
+      uses: Wurst-Imperium/dispatch-and-wait@v1
+      with:
+        token: ${{ github.token }}
+        owner: ${{ github.repository_owner }}
+        repo: ${{ github.repository }}
+        ref: ${{ github.ref_name }}
+        workflow: fake_publish.yml
+        workflow_inputs: |
+          {
+            "mc_version": "${{ steps.mc_version.outputs.mc_version }}",
+            "branch": "${{ github.event.workflow_run.head_branch }}",
+            "mods": "wurst"
+          }
+        run_timeout_seconds: 1200  # 20 minutes

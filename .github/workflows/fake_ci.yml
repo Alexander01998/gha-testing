@@ -1,0 +1,20 @@
+name: Fake CI
+
+on:
+  push:
+    branches-ignore:
+    - "dependabot/**"
+    tags-ignore:
+    - "**"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      distinct_id:
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pretend to build
+        run: sleep 30
